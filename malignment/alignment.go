@@ -81,7 +81,6 @@ func run(pass *analysis.Pass) (interface{}, error) {
 var unsafePointerTyp = types.Unsafe.Scope().Lookup("Pointer").(*types.TypeName).Type()
 
 func newType(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
-
 	structType, ok := node.(*ast.StructType)
 	if !ok {
 		return node, nil
@@ -110,7 +109,6 @@ func newType(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
 	for _, f := range structType.Fields.List {
 		f.Comment = nil
 		f.Doc = nil
-
 		switch sub := f.Type.(type) {
 		case *ast.StructType:
 			var msg []string
@@ -120,11 +118,9 @@ func newType(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
 			var msg []string
 			sub.Elt, msg = newType(pass, sub.Elt)
 			messages = append(messages, msg...)
-
 		default:
 
 		}
-
 		if len(f.Names) <= 1 {
 			flat = append(flat, f)
 			continue
@@ -223,7 +219,7 @@ func fieldalignment(pass *analysis.Pass, node *ast.StructType, typ *types.Struct
 			sub.Elt, msg = newType(pass, sub.Elt)
 			messages = append(messages, msg...)
 		default:
-			// fmt.Println(reflect.TypeOf(f.Type))
+
 		}
 
 		if len(f.Names) <= 1 {

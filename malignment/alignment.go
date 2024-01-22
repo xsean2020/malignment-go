@@ -80,8 +80,14 @@ func run(pass *analysis.Pass) (interface{}, error) {
 
 var unsafePointerTyp = types.Unsafe.Scope().Lookup("Pointer").(*types.TypeName).Type()
 
-func newType(pass *analysis.Pass, node *ast.StructType) (*ast.StructType, []string) {
-	tv, ok := pass.TypesInfo.Types[node]
+func newType(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
+
+	structType, ok := node.(*ast.StructType)
+	if !ok {
+		return node, nil
+	}
+
+	tv, ok := pass.TypesInfo.Types[structType]
 	if !ok {
 		return node, nil
 	}
@@ -101,14 +107,22 @@ func newType(pass *analysis.Pass, node *ast.StructType) (*ast.StructType, []stri
 		return node, nil
 	}
 	var flat []*ast.Field
-	for _, f := range node.Fields.List {
-
+	for _, f := range structType.Fields.List {
 		f.Comment = nil
 		f.Doc = nil
-		if sub, ok := f.Type.(*ast.StructType); ok {
+
+		switch sub := f.Type.(type) {
+		case *ast.StructType:
 			var msg []string
 			f.Type, msg = newType(pass, sub)
 			messages = append(messages, msg...)
+		case *ast.ArrayType: // 必须是struct
+			var msg []string
+			sub.Elt, msg = newType(pass, sub.Elt)
+			messages = append(messages, msg...)
+
+		default:
+
 		}
 
 		if len(f.Names) <= 1 {
@@ -136,31 +150,38 @@ func newType(pass *analysis.Pass, node *ast.StructType) (*ast.StructType, []stri
 	}, messages
 }
 
-func needAlignments(pass *analysis.Pass, node *ast.StructType) bool {
-	for _, f := range node.Fields.List {
-		if sub, ok := f.Type.(*ast.StructType); ok {
-			if needAlignments(pass, sub) {
+func needAlignments(pass *analysis.Pass, node ast.Expr) bool {
+	switch structType := node.(type) {
+	case *ast.StructType:
+		for _, f := range structType.Fields.List {
+			if needAlignments(pass, f.Type) {
 				return true
 			}
 		}
-	}
 
-	tv, ok := pass.TypesInfo.Types[node]
-	if !ok {
+		tv, ok := pass.TypesInfo.Types[structType]
+		if !ok {
+			return false
+		}
+		typ := tv.Type.(*types.Struct)
+		wordSize := pass.TypesSizes.Sizeof(unsafePointerTyp)
+		maxAlign := pass.TypesSizes.Alignof(unsafePointerTyp)
+		s := gcSizes{wordSize, maxAlign}
+		optimal, _ := optimalOrder(typ, &s)
+		optsz, optptrs := s.Sizeof(optimal), s.ptrdata(optimal)
+		if sz := s.Sizeof(typ); sz != optsz {
+			return true
+		} else if ptrs := s.ptrdata(typ); ptrs != optptrs {
+			return true
+		}
+	case *ast.ArrayType:
+		if needAlignments(pass, structType.Elt) {
+			return true
+		}
+	default:
 		return false
 	}
-	typ := tv.Type.(*types.Struct)
 
-	wordSize := pass.TypesSizes.Sizeof(unsafePointerTyp)
-	maxAlign := pass.TypesSizes.Alignof(unsafePointerTyp)
-	s := gcSizes{wordSize, maxAlign}
-	optimal, _ := optimalOrder(typ, &s)
-	optsz, optptrs := s.Sizeof(optimal), s.ptrdata(optimal)
-	if sz := s.Sizeof(typ); sz != optsz {
-		return true
-	} else if ptrs := s.ptrdata(typ); ptrs != optptrs {
-		return true
-	}
 	return false
 }
 
@@ -192,10 +213,17 @@ func fieldalignment(pass *analysis.Pass, node *ast.StructType, typ *types.Struct
 		//       See https://github.com/golang/go/issues/20744
 		f.Comment = nil
 		f.Doc = nil
-		if sub, ok := f.Type.(*ast.StructType); ok {
+		switch sub := f.Type.(type) {
+		case *ast.StructType:
 			var msg []string
 			f.Type, msg = newType(pass, sub)
 			messages = append(messages, msg...)
+		case *ast.ArrayType:
+			var msg []string
+			sub.Elt, msg = newType(pass, sub.Elt)
+			messages = append(messages, msg...)
+		default:
+			// fmt.Println(reflect.TypeOf(f.Type))
 		}
 
 		if len(f.Names) <= 1 {

@@ -19,20 +19,9 @@ The above command will recursively fix memory alignment issues in all Go files w
 
 ### Example
 ```go
-type A struct {
-        C int64
-        D struct {
-                Bb int16
-                Cc int32
-                AA int8
-        }
-        Array []int32
-        Age   int16
-        Map   map[string]int
-        Bool  bool
-}
 
 
+/*
 +----+--------------------------------+-----------+-----------+
 | ID |           FIELDTYPE            | FIELDNAME | FIELDSIZE |
 +----+--------------------------------+-----------+-----------+
@@ -54,6 +43,22 @@ type A struct {
 |D|D| | | | | | |
 |E|E|E|E|E|E|E|E|
 |F|
+*/
+
+type A struct {
+        C int64
+        D struct {
+                Bb int16
+                Cc int32
+                AA int8
+        }
+        Array []int32
+        Age   int16
+        Map   map[string]int
+        Bool  bool
+}
+
+
 ```
 After run command:
 ```bash
@@ -62,19 +67,7 @@ malignment-go -fix .
 ```
 
 ```go
-type A struct {
-	Map   map[string]int
-	Array []int32
-	C     int64
-	D     struct {
-		Cc int32
-		Bb int16
-		AA int8
-	}
-	Age  int16
-	Bool bool
-}
-
+/*
 +----+--------------------------------+-----------+-----------+
 | ID |           FIELDTYPE            | FIELDNAME | FIELDSIZE |
 +----+--------------------------------+-----------+-----------+
@@ -94,6 +87,21 @@ type A struct {
 |C|C|C|C|C|C|C|C|
 |D|D|D|D|D|D|D|D|
 |E|E|F|
+*/
+
+type A struct {
+	Map   map[string]int
+	Array []int32
+	C     int64
+	D     struct {
+		Cc int32
+		Bb int16
+		AA int8
+	}
+	Age  int16
+	Bool bool
+}
+
 ```
 
 ### Notes

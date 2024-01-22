@@ -32,9 +32,7 @@ type A struct {
         Bool  bool
 }
 
-```
 
-```
 +----+--------------------------------+-----------+-----------+
 | ID |           FIELDTYPE            | FIELDNAME | FIELDSIZE |
 +----+--------------------------------+-----------+-----------+
@@ -63,7 +61,20 @@ malignment-go -fix .
 
 ```
 
-```
+```go
+type A struct {
+	Map   map[string]int
+	Array []int32
+	C     int64
+	D     struct {
+		Cc int32
+		Bb int16
+		AA int8
+	}
+	Age  int16
+	Bool bool
+}
+
 +----+--------------------------------+-----------+-----------+
 | ID |           FIELDTYPE            | FIELDNAME | FIELDSIZE |
 +----+--------------------------------+-----------+-----------+

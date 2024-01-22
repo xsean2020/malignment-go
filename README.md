@@ -1,6 +1,6 @@
 # malignment-go
 **FORK FROM** https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/fieldalignment   
-Suport anonymous structure！
+***Suport anonymous structure!***
 
 malignment-go is a tool designed to address memory alignment issues in Go language structs. With this tool, you can quickly identify and adjust the memory alignment of structs to improve memory utilization.
 

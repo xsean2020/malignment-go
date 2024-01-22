@@ -52,7 +52,7 @@ type Ignore struct{}
 func (Ignore) AFact() {}
 
 var Analyzer = &analysis.Analyzer{
-	Name: "fieldalignment",
+	Name: "malignment",
 	Doc:  Doc,
 	URL:  "https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/fieldalignment",
 	Run:  run,
@@ -65,10 +65,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				for _, spec := range genDecl.Specs {
 					if typeSpec, ok := spec.(*ast.TypeSpec); ok {
 						if s, ok := typeSpec.Type.(*ast.StructType); ok {
-
-							if tv, ok := pass.TypesInfo.Types[s]; ok {
-								fieldalignment(pass, s, tv.Type.(*types.Struct))
-							}
+							fieldalignment(pass, s)
 						}
 					}
 				}
@@ -80,16 +77,44 @@ func run(pass *analysis.Pass) (interface{}, error) {
 
 var unsafePointerTyp = types.Unsafe.Scope().Lookup("Pointer").(*types.TypeName).Type()
 
-func newType(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
-	structType, ok := node.(*ast.StructType)
+func resortFields(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
+	// 优先处理子节点
+	var messages []string
+	var flat []*ast.Field
+	switch typ := node.(type) {
+	case *ast.StructType:
+		for _, f := range typ.Fields.List {
+			f.Comment = nil
+			f.Doc = nil
+			var tmp []string
+			f.Type, tmp = resortFields(pass, f.Type)
+			messages = append(messages, tmp...)
+
+			if len(f.Names) <= 1 {
+				flat = append(flat, f)
+				continue
+			}
+			for _, name := range f.Names {
+				flat = append(flat, &ast.Field{
+					Names: []*ast.Ident{name},
+					Type:  f.Type,
+				})
+			}
+		}
+	case *ast.ArrayType:
+		var tmp []string
+		typ.Elt, tmp = resortFields(pass, typ.Elt)
+		messages = append(messages, tmp...)
+		return node, messages
+	default:
+		return node, nil
+	}
+
+	tv, ok := pass.TypesInfo.Types[node] // struct 才有效
 	if !ok {
 		return node, nil
 	}
 
-	tv, ok := pass.TypesInfo.Types[structType]
-	if !ok {
-		return node, nil
-	}
 	typ := tv.Type.(*types.Struct)
 	wordSize := pass.TypesSizes.Sizeof(unsafePointerTyp)
 	maxAlign := pass.TypesSizes.Alignof(unsafePointerTyp)
@@ -97,43 +122,15 @@ func newType(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
 	s := gcSizes{wordSize, maxAlign}
 	optimal, indexes := optimalOrder(typ, &s)
 	optsz, optptrs := s.Sizeof(optimal), s.ptrdata(optimal)
-	var messages []string
+
 	if sz := s.Sizeof(typ); sz != optsz {
-		messages = append(messages, fmt.Sprintf("struct of size %d could be %d", sz, optsz))
+		messages = append(messages, fmt.Sprintf("%s struct of size %d could be %d", typ.Underlying(), sz, optsz))
 	} else if ptrs := s.ptrdata(typ); ptrs != optptrs {
-		messages = append(messages, fmt.Sprintf("struct with %d pointer bytes could be %d", ptrs, optptrs))
+		messages = append(messages, fmt.Sprintf("%s  struct with %d pointer bytes could be %d", typ.Underlying(), ptrs, optptrs))
 	} else {
-		return node, nil
+		return node, messages
 	}
-	var flat []*ast.Field
-	for _, f := range structType.Fields.List {
-		f.Comment = nil
-		f.Doc = nil
-		switch sub := f.Type.(type) {
-		case *ast.StructType:
-			var msg []string
-			f.Type, msg = newType(pass, sub)
-			messages = append(messages, msg...)
-		case *ast.ArrayType: // 必须是struct
-			var msg []string
-			sub.Elt, msg = newType(pass, sub.Elt)
-			messages = append(messages, msg...)
-		default:
 
-		}
-		if len(f.Names) <= 1 {
-			flat = append(flat, f)
-			continue
-		}
-
-		for _, name := range f.Names {
-			flat = append(flat, &ast.Field{
-				Names: []*ast.Ident{name},
-				Type:  f.Type,
-			})
-		}
-	}
-	// Sort fields according to the optimal order.
 	var reordered []*ast.Field
 	for _, index := range indexes {
 		reordered = append(reordered, flat[index])
@@ -146,112 +143,16 @@ func newType(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
 	}, messages
 }
 
-func needAlignments(pass *analysis.Pass, node ast.Expr) bool {
-	switch structType := node.(type) {
-	case *ast.StructType:
-		for _, f := range structType.Fields.List {
-			if needAlignments(pass, f.Type) {
-				return true
-			}
-		}
-
-		tv, ok := pass.TypesInfo.Types[structType]
-		if !ok {
-			return false
-		}
-		typ := tv.Type.(*types.Struct)
-		wordSize := pass.TypesSizes.Sizeof(unsafePointerTyp)
-		maxAlign := pass.TypesSizes.Alignof(unsafePointerTyp)
-		s := gcSizes{wordSize, maxAlign}
-		optimal, _ := optimalOrder(typ, &s)
-		optsz, optptrs := s.Sizeof(optimal), s.ptrdata(optimal)
-		if sz := s.Sizeof(typ); sz != optsz {
-			return true
-		} else if ptrs := s.ptrdata(typ); ptrs != optptrs {
-			return true
-		}
-	case *ast.ArrayType:
-		if needAlignments(pass, structType.Elt) {
-			return true
-		}
-	default:
-		return false
-	}
-
-	return false
-}
-
-func fieldalignment(pass *analysis.Pass, node *ast.StructType, typ *types.Struct) {
-	if !needAlignments(pass, node) {
+func fieldalignment(pass *analysis.Pass, node *ast.StructType) {
+	newStr, messages := resortFields(pass, node)
+	if len(messages) == 0 {
 		return
 	}
-
-	wordSize := pass.TypesSizes.Sizeof(unsafePointerTyp)
-	maxAlign := pass.TypesSizes.Alignof(unsafePointerTyp)
-
-	s := gcSizes{wordSize, maxAlign}
-	optimal, indexes := optimalOrder(typ, &s)
-	optsz, optptrs := s.Sizeof(optimal), s.ptrdata(optimal)
-
-	var messages []string
-	if sz := s.Sizeof(typ); sz != optsz {
-		messages = append(messages, fmt.Sprintf("struct of size %d could be %d", sz, optsz))
-	} else if ptrs := s.ptrdata(typ); ptrs != optptrs {
-		messages = append(messages, fmt.Sprintf("struct with %d pointer bytes could be %d", ptrs, optptrs))
-	}
-
-	// Flatten the ast node since it could have multiple field names per list item while
-	// *types.Struct only have one item per field.
-	// TODO: Preserve multi-named fields instead of flattening.
-	var flat []*ast.Field
-	for _, f := range node.Fields.List {
-		// TODO: Preserve comment, for now get rid of them.
-		//       See https://github.com/golang/go/issues/20744
-		f.Comment = nil
-		f.Doc = nil
-		switch sub := f.Type.(type) {
-		case *ast.StructType:
-			var msg []string
-			f.Type, msg = newType(pass, sub)
-			messages = append(messages, msg...)
-		case *ast.ArrayType:
-			var msg []string
-			sub.Elt, msg = newType(pass, sub.Elt)
-			messages = append(messages, msg...)
-		default:
-
-		}
-
-		if len(f.Names) <= 1 {
-			flat = append(flat, f)
-			continue
-		}
-		for _, name := range f.Names {
-			flat = append(flat, &ast.Field{
-				Names: []*ast.Ident{name},
-				Type:  f.Type,
-			})
-		}
-	}
-
-	// Sort fields according to the optimal order.
-	var reordered []*ast.Field
-	for _, index := range indexes {
-		reordered = append(reordered, flat[index])
-	}
-
-	newStr := &ast.StructType{
-		Fields: &ast.FieldList{
-			List: reordered,
-		},
-	}
-
 	// Write the newly aligned struct node to get the content for suggested fixes.
 	var buf bytes.Buffer
 	if err := format.Node(&buf, token.NewFileSet(), newStr); err != nil {
 		return
 	}
-
 	pass.Report(analysis.Diagnostic{
 		Pos:     node.Pos(),
 		End:     node.Pos() + token.Pos(len("struct")),

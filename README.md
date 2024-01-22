@@ -34,7 +34,6 @@ type A struct {
 
 ```
 
-#### Fields in struct 
 ```
 +----+--------------------------------+-----------+-----------+
 | ID |           FIELDTYPE            | FIELDNAME | FIELDSIZE |
@@ -64,7 +63,6 @@ malignment-go -fix .
 
 ```
 
-####  Fields in struct 
 ```
 +----+--------------------------------+-----------+-----------+
 | ID |           FIELDTYPE            | FIELDNAME | FIELDSIZE |

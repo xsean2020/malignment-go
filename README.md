@@ -13,7 +13,7 @@ Usage
 ```bash
 malignment-go -fix .  
 // or 
-go run -mod=mod https://github.com/xsean2020/malignment-go -fix .
+go run -mod=mod github.com/xsean2020/malignment-go -fix .
 ```
 The above command will recursively fix memory alignment issues in all Go files within the current directory.
 

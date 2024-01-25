@@ -47,10 +47,6 @@ to occupy the same CPU cache line, inducing a form of memory contention
 known as "false sharing" that slows down both goroutines.
 `
 
-type Ignore struct{}
-
-func (Ignore) AFact() {}
-
 var Analyzer = &analysis.Analyzer{
 	Name: "malignment",
 	Doc:  Doc,
@@ -65,7 +61,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				for _, spec := range genDecl.Specs {
 					if typeSpec, ok := spec.(*ast.TypeSpec); ok {
 						if s, ok := typeSpec.Type.(*ast.StructType); ok {
-							fieldalignment(pass, s)
+							fieldalignment(typeSpec.Name.Name, pass, s)
 						}
 					}
 				}
@@ -77,7 +73,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 
 var unsafePointerTyp = types.Unsafe.Scope().Lookup("Pointer").(*types.TypeName).Type()
 
-func resortFields(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
+func resortFields(name string, pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
 	// 优先处理子节点
 	var messages []string
 	var flat []*ast.Field
@@ -87,7 +83,12 @@ func resortFields(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
 			f.Comment = nil
 			f.Doc = nil
 			var tmp []string
-			f.Type, tmp = resortFields(pass, f.Type)
+			var fname = "Anonymous"
+			if len(f.Names) > 0 {
+				fname = f.Names[0].Name
+			}
+
+			f.Type, tmp = resortFields(name+"."+fname, pass, f.Type)
 			messages = append(messages, tmp...)
 
 			if len(f.Names) <= 1 {
@@ -103,7 +104,7 @@ func resortFields(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
 		}
 	case *ast.ArrayType:
 		var tmp []string
-		typ.Elt, tmp = resortFields(pass, typ.Elt)
+		typ.Elt, tmp = resortFields(name, pass, typ.Elt)
 		messages = append(messages, tmp...)
 		return node, messages
 	default:
@@ -124,9 +125,9 @@ func resortFields(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
 	optsz, optptrs := s.Sizeof(optimal), s.ptrdata(optimal)
 
 	if sz := s.Sizeof(typ); sz != optsz {
-		messages = append(messages, fmt.Sprintf("%s struct of size %d could be %d", typ.Underlying(), sz, optsz))
+		messages = append(messages, fmt.Sprintf("%s struct of size %d could be %d  save %.2f%%", name, sz, optsz, float64(sz-optsz)*100/float64(sz)))
 	} else if ptrs := s.ptrdata(typ); ptrs != optptrs {
-		messages = append(messages, fmt.Sprintf("%s  struct with %d pointer bytes could be %d", typ.Underlying(), ptrs, optptrs))
+		messages = append(messages, fmt.Sprintf("%s struct with %d pointer bytes could be %d save %.2f%%", name, ptrs, optptrs, float64(ptrs-optptrs)*100/float64(sz)))
 	} else {
 		return node, messages
 	}
@@ -143,8 +144,8 @@ func resortFields(pass *analysis.Pass, node ast.Expr) (ast.Expr, []string) {
 	}, messages
 }
 
-func fieldalignment(pass *analysis.Pass, node *ast.StructType) {
-	newStr, messages := resortFields(pass, node)
+func fieldalignment(name string, pass *analysis.Pass, node *ast.StructType) {
+	newStr, messages := resortFields(name, pass, node)
 	if len(messages) == 0 {
 		return
 	}
